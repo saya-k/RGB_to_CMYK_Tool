@@ -162,6 +162,32 @@ INDEX_HTML = r"""<!doctype html>
       font-size: 15px;
     }
     select:focus { outline: 2px solid rgba(19, 95, 102, .18); border-color: var(--teal); }
+    .factor-options {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .factor-option {
+      height: 44px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: #f3f5fa;
+      color: #6d7a91;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(20, 38, 55, .07);
+    }
+    .factor-option.active {
+      border-color: #2f75ff;
+      background: #f7f8ff;
+      color: #2f65ff;
+      box-shadow: 0 0 0 2px rgba(47, 117, 255, .12);
+    }
+    .factor-option:focus-visible {
+      outline: 2px solid rgba(47, 117, 255, .28);
+      outline-offset: 2px;
+    }
     .profile-card {
       margin-top: 16px;
       padding: 22px;
@@ -519,16 +545,20 @@ INDEX_HTML = r"""<!doctype html>
           <label class="label" for="outputFormatSelect">Output Format</label>
           <select id="outputFormatSelect"></select>
           <div id="outputFormatNote" class="field-note"></div>
+
+          <label class="label" style="margin-top: 18px;">Quality Upscale</label>
+          <div class="factor-options" role="radiogroup" aria-label="Quality upscale">
+            <button class="factor-option active" type="button" data-upscale-factor="1" role="radio" aria-checked="true">1x</button>
+            <button class="factor-option" type="button" data-upscale-factor="2" role="radio" aria-checked="false">2x</button>
+            <button class="factor-option" type="button" data-upscale-factor="4" role="radio" aria-checked="false">4x</button>
+          </div>
+          <div id="upscaleFactorNote" class="field-note">1x keeps the original pixel dimensions. 2x and 4x enlarge the output image.</div>
           <div class="actions">
             <div id="status" class="status">Please select images to convert.</div>
             <button id="generateBtn" class="button" type="button" disabled>Convert RGB to CMYK</button>
           </div>
         </section>
 
-        <div class="about-card">
-          <strong>About ICC Profiles</strong>
-          ICC profiles ensure accurate color reproduction across different printing devices and paper types.
-        </div>
       </aside>
     </div>
   </main>
@@ -563,6 +593,9 @@ INDEX_HTML = r"""<!doctype html>
     const renderingIntentNote = document.getElementById('renderingIntentNote');
     const outputFormatSelect = document.getElementById('outputFormatSelect');
     const outputFormatNote = document.getElementById('outputFormatNote');
+    const upscaleFactorButtons = Array.from(document.querySelectorAll('[data-upscale-factor]'));
+    const upscaleFactorNote = document.getElementById('upscaleFactorNote');
+    let upscaleFactor = '1';
     const ditheringInput = document.getElementById('ditheringInput');
     const dropzone = document.getElementById('dropzone');
     const fileInput = document.getElementById('fileInput');
@@ -661,6 +694,7 @@ INDEX_HTML = r"""<!doctype html>
         outputFormatSelect.appendChild(option);
       });
       outputFormatSelect.value = defaultOutputFormat;
+      setUpscaleFactor('1');
       ditheringInput.checked = Boolean(defaultDithering);
       renderSourceNotes();
     }
@@ -669,11 +703,25 @@ INDEX_HTML = r"""<!doctype html>
       const profile = sourceProfiles.find(item => item.id === sourceProfileSelect.value) || sourceProfiles[0];
       const intent = renderingIntents.find(item => item.id === renderingIntentSelect.value) || renderingIntents[0];
       const format = outputFormats.find(item => item.id === outputFormatSelect.value) || outputFormats[0];
+      const upscaleValue = Number(upscaleFactor || '1');
       sourceProfileNote.textContent = profile.available
         ? `${profile.description} ICC file ready: ${profile.filename}`
         : `${profile.description} ICC file is not bundled; use Custom sRGB to upload it.`;
       renderingIntentNote.textContent = intent.description;
       outputFormatNote.textContent = format.description;
+      upscaleFactorNote.textContent = upscaleValue === 1
+        ? '1x keeps the original pixel dimensions.'
+        : `${upscaleValue}x enlarges output pixel dimensions using high-quality resampling.`;
+    }
+
+    function setUpscaleFactor(value) {
+      upscaleFactor = ['1', '2', '4'].includes(String(value)) ? String(value) : '1';
+      upscaleFactorButtons.forEach(button => {
+        const isActive = button.dataset.upscaleFactor === upscaleFactor;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-checked', isActive ? 'true' : 'false');
+      });
+      renderSourceNotes();
     }
 
     function setSourceMode(mode) {
@@ -744,6 +792,9 @@ INDEX_HTML = r"""<!doctype html>
     sourceProfileSelect.addEventListener('change', renderSourceNotes);
     renderingIntentSelect.addEventListener('change', renderSourceNotes);
     outputFormatSelect.addEventListener('change', renderSourceNotes);
+    upscaleFactorButtons.forEach(button => {
+      button.addEventListener('click', () => setUpscaleFactor(button.dataset.upscaleFactor));
+    });
     fileInput.addEventListener('change', event => addFiles(event.target.files));
     iccInput.addEventListener('change', event => {
       customIccFile = event.target.files[0] || null;
@@ -773,6 +824,7 @@ INDEX_HTML = r"""<!doctype html>
       form.append('rendering_intent', renderingIntentSelect.value);
       form.append('enable_dithering', ditheringInput.checked ? '1' : '0');
       form.append('output_format', outputFormatSelect.value);
+      form.append('upscale_factor', upscaleFactor);
       if (profileMode === 'custom' && customIccFile) form.append('custom_icc', customIccFile, customIccFile.name);
       if (sourceProfileMode === 'custom' && customSourceIccFile) form.append('custom_source_icc', customSourceIccFile, customSourceIccFile.name);
       files.forEach(file => form.append('images', file, file.name));
@@ -962,6 +1014,12 @@ class AppHandler(BaseHTTPRequestHandler):
             rendering_intent = rendering_intent_value(fields.get("rendering_intent", DEFAULT_RENDERING_INTENT))
             enable_dithering = fields.get("enable_dithering", "1") == "1"
             output_format = output_format_by_id(fields.get("output_format", DEFAULT_OUTPUT_FORMAT))["id"]
+            try:
+                upscale_factor = int(fields.get("upscale_factor", "1"))
+            except ValueError:
+                upscale_factor = 1
+            if upscale_factor not in {1, 2, 4}:
+                upscale_factor = 1
             saved_paths: list[Path] = []
 
             ensure_directories()
@@ -988,6 +1046,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 rendering_intent,
                 enable_dithering,
                 output_format,
+                upscale_factor,
             )
             if selected_profile_path is None:
                 stats["icc_message"] = (
@@ -1048,4 +1107,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+
 

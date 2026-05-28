@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import csv
 import logging
@@ -263,6 +263,13 @@ def write_report(rows: list[dict[str, str]]) -> None:
         writer.writerows(rows)
 
 
+def upscale_image(image: Image.Image, upscale_factor: int) -> Image.Image:
+    if upscale_factor <= 1:
+        return image
+    width, height = image.size
+    return image.resize((width * upscale_factor, height * upscale_factor), Image.Resampling.LANCZOS)
+
+
 def output_path_for(path: Path, output_format: str) -> Path:
     extension = { "tiff": ".tif", "jpg": ".jpg", "png": ".png" }.get(output_format, ".tif")
     return unique_path(OUTPUT_DIR / f"{path.stem}_CMYK{extension}")
@@ -292,6 +299,7 @@ def process_image(
     cmyk_profile_path: Path | None,
     enable_dithering: bool = True,
     output_format: str = "tiff",
+    upscale_factor: int = 1,
 ) -> dict[str, str]:
     row = {
         COL_FILE: path.name,
@@ -322,6 +330,7 @@ def process_image(
                 cmyk_image = convert_rgb_to_cmyk(image, transform, enable_dithering)
                 row[COL_STATUS] = STATUS_YES
 
+            cmyk_image = upscale_image(cmyk_image, upscale_factor)
             save_output_image(cmyk_image, output_path, output_format, cmyk_profile_path)
             make_preview(image, cmyk_image, preview_path, path.name, cmyk_profile_path)
             row[COL_OUTPUT] = str(output_path)
@@ -342,6 +351,7 @@ def run_conversion(
     rendering_intent: int = 1,
     enable_dithering: bool = True,
     output_format: str = "tiff",
+    upscale_factor: int = 1,
 ) -> dict[str, object]:
     ensure_directories()
     setup_logging()
@@ -370,7 +380,7 @@ def run_conversion(
 
     for image_path in paths:
         logging.info("Processing: %s", image_path.name)
-        rows.append(process_image(image_path, transform, cmyk_profile_path, enable_dithering, output_format))
+        rows.append(process_image(image_path, transform, cmyk_profile_path, enable_dithering, output_format, upscale_factor))
 
     write_report(rows)
 
@@ -384,6 +394,7 @@ def run_conversion(
         "output_dir": str(OUTPUT_DIR),
         "icc_message": icc_message,
         "output_format": output_format,
+        "upscale_factor": upscale_factor,
         "enable_dithering": enable_dithering,
         "rows": rows,
     }
@@ -400,3 +411,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
